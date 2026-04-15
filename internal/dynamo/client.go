@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -109,6 +110,43 @@ func (c *Client) QueryMappingsByProfileID(ctx context.Context, storeID, profileI
 	}
 
 	return mappings, nil
+}
+
+// QueryMappingsForMultipleProfiles fetches mappings for multiple profiles in parallel
+func (c *Client) QueryMappingsForMultipleProfiles(ctx context.Context, storeID string, profileIDs []string) ([]models.Mapping, error) {
+	if len(profileIDs) == 0 {
+		return nil, nil
+	}
+
+	var (
+		mu          sync.Mutex
+		wg          sync.WaitGroup
+		allMappings []models.Mapping
+		errors      []error
+	)
+
+	for _, pid := range profileIDs {
+		wg.Add(1)
+		go func(profileID string) {
+			defer wg.Done()
+			mappings, err := c.QueryMappingsByProfileID(ctx, storeID, profileID)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errors = append(errors, err)
+				return
+			}
+			allMappings = append(allMappings, mappings...)
+		}(pid)
+	}
+
+	wg.Wait()
+
+	if len(errors) > 0 {
+		return allMappings, fmt.Errorf("some mapping queries failed: %v", errors[0])
+	}
+
+	return allMappings, nil
 }
 
 // QueryProfileIDsByIdentifier finds profile IDs for a given identifier
@@ -233,47 +271,75 @@ func (c *Client) QueryCanonicalLink(ctx context.Context, accountSID, storeID, ca
 	return link, nil
 }
 
+// ResolveCanonicalProfileID resolves the canonical profile ID for a given profile.
+// It follows the merge chain: if the profile has an NC# item, it follows CPID until it finds a C# item.
+func (c *Client) ResolveCanonicalProfileID(ctx context.Context, accountSID, storeID, profileID string) (string, error) {
+	currentID := profileID
+
+	for {
+		// Check if this is a canonical profile (C# lookup)
+		canonicalLink, err := c.QueryCanonicalLink(ctx, accountSID, storeID, currentID)
+		if err != nil {
+			return "", err
+		}
+		if canonicalLink != nil {
+			// Found the canonical profile
+			return currentID, nil
+		}
+
+		// Not a canonical, check if it was merged (NC# lookup)
+		merges, err := c.QueryMergesByProfileID(ctx, accountSID, storeID, currentID)
+		if err != nil {
+			return "", err
+		}
+		if len(merges) == 0 {
+			// No merge record found - this profile doesn't exist or is standalone
+			// Return the original profileID as canonical
+			return profileID, nil
+		}
+
+		// Follow the merge chain to the canonical
+		if merges[0].CanonicalProfileID == "" {
+			return profileID, nil
+		}
+		currentID = merges[0].CanonicalProfileID
+	}
+}
+
 // QueryAllMergesForProfile fetches all merge-related data for a profile
-// This includes both NC# (non-canonical) and C# (canonical) queries
+// Flow:
+// 1. Resolve the canonical profile ID for the input profile
+// 2. Query C# item to get list of all merged profile IDs
+// 3. For each merged profile ID, query NC# item to get merge details
 func (c *Client) QueryAllMergesForProfile(ctx context.Context, accountSID, storeID, profileID string) ([]models.Merge, *models.CanonicalLink, error) {
+	// Step 1: Resolve to canonical profile ID
+	canonicalID, err := c.ResolveCanonicalProfileID(ctx, accountSID, storeID, profileID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to resolve canonical profile ID: %w", err)
+	}
+
+	// Step 2: Query C# item to get canonical link with all merged profiles
+	canonicalLink, err := c.QueryCanonicalLink(ctx, accountSID, storeID, canonicalID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if canonicalLink == nil {
+		// No canonical link exists - profile has no merges
+		return nil, nil, nil
+	}
+
+	// Step 3: For each merged profile ID, query NC# item to get merge details
 	var allMerges []models.Merge
-
-	// First, check if this profile has been merged into another (NC# lookup for this profile)
-	merges, err := c.QueryMergesByProfileID(ctx, accountSID, storeID, profileID)
-	if err != nil {
-		return nil, nil, err
-	}
-	allMerges = append(allMerges, merges...)
-
-	// Check if this profile is a canonical profile (C# lookup)
-	canonicalLink, err := c.QueryCanonicalLink(ctx, accountSID, storeID, profileID)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// If we found a merge record pointing to a different canonical, look up that canonical link
-	if len(merges) > 0 && merges[0].CanonicalProfileID != "" && merges[0].CanonicalProfileID != profileID {
-		targetLink, err := c.QueryCanonicalLink(ctx, accountSID, storeID, merges[0].CanonicalProfileID)
-		if err == nil && targetLink != nil {
-			canonicalLink = targetLink
+	for _, mergedProfileID := range canonicalLink.MergedProfileIDs {
+		if mergedProfileID == "" {
+			continue
 		}
-	}
-
-	// If we have a canonical link with merged profiles, query the NC# item for each
-	// This gives us the detailed merge records (MergeFrom, MergeTo, Reason, etc.)
-	if canonicalLink != nil {
-		for _, mergedProfileID := range canonicalLink.MergedProfileIDs {
-			// Skip if empty
-			if mergedProfileID == "" {
-				continue
-			}
-			// Query the NC# item for this merged profile
-			mergeItems, err := c.QueryMergesByProfileID(ctx, accountSID, storeID, mergedProfileID)
-			if err != nil {
-				continue // Don't fail on individual lookups
-			}
-			allMerges = append(allMerges, mergeItems...)
+		mergeItems, err := c.QueryMergesByProfileID(ctx, accountSID, storeID, mergedProfileID)
+		if err != nil {
+			continue // Don't fail on individual lookups
 		}
+		allMerges = append(allMerges, mergeItems...)
 	}
 
 	// Deduplicate merges by MergeID

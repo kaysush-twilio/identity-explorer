@@ -491,16 +491,32 @@ func (m Model) queryProfileData(profileID string) tea.Cmd {
 			storeID = strings.TrimSpace(m.identifierInputs[1].Value())
 		}
 
-		// Query mappings
-		mappings, err := client.QueryMappingsByProfileID(ctx, storeID, profileID)
+		// Step 1: Query merges to get canonical link and all merged profile IDs
+		merges, canonicalLink, err := client.QueryAllMergesForProfile(ctx, accountID, storeID, profileID)
 		if err != nil {
 			return queryResultMsg{result: &models.QueryResult{ProfileID: profileID, Error: err}}
 		}
 
-		// Query merges
-		merges, canonicalLink, err := client.QueryAllMergesForProfile(ctx, accountID, storeID, profileID)
+		// Step 2: Build list of all profile IDs to query mappings for
+		// This includes the canonical profile + all merged profiles
+		profileIDsToQuery := []string{profileID}
+		if canonicalLink != nil {
+			// Add canonical profile if different from input
+			if canonicalLink.CanonicalProfileID != profileID {
+				profileIDsToQuery = append(profileIDsToQuery, canonicalLink.CanonicalProfileID)
+			}
+			// Add all merged profiles
+			for _, mergedID := range canonicalLink.MergedProfileIDs {
+				if mergedID != "" && mergedID != profileID {
+					profileIDsToQuery = append(profileIDsToQuery, mergedID)
+				}
+			}
+		}
+
+		// Step 3: Query mappings for all profiles in parallel
+		mappings, err := client.QueryMappingsForMultipleProfiles(ctx, storeID, profileIDsToQuery)
 		if err != nil {
-			return queryResultMsg{result: &models.QueryResult{ProfileID: profileID, Mappings: mappings, Error: err}}
+			return queryResultMsg{result: &models.QueryResult{ProfileID: profileID, Merges: merges, CanonicalLink: canonicalLink, Error: err}}
 		}
 
 		return queryResultMsg{
@@ -538,10 +554,10 @@ func (m Model) queryIdentifier() tea.Cmd {
 
 func (m Model) createMappingsTable(mappings []models.Mapping) table.Model {
 	columns := []table.Column{
-		{Title: "ID Type", Width: 15},
-		{Title: "ID Value", Width: 40},
-		{Title: "Created At", Width: 25},
-		{Title: "Unique", Width: 8},
+		{Title: "Profile ID", Width: 38},
+		{Title: "ID Type", Width: 12},
+		{Title: "ID Value", Width: 35},
+		{Title: "Unique", Width: 6},
 	}
 
 	rows := make([]table.Row, len(mappings))
@@ -551,9 +567,9 @@ func (m Model) createMappingsTable(mappings []models.Mapping) table.Model {
 			unique = "Yes"
 		}
 		rows[i] = table.Row{
+			mapping.ProfileID,
 			mapping.IDType,
 			mapping.IDValue,
-			mapping.CreatedAt.Format("2006-01-02 15:04:05"),
 			unique,
 		}
 	}
@@ -591,22 +607,18 @@ func (m Model) createMappingsTable(mappings []models.Mapping) table.Model {
 
 func (m Model) createMergesTable(merges []models.Merge) table.Model {
 	columns := []table.Column{
-		{Title: "Merge From", Width: 34},
-		{Title: "Merge To", Width: 34},
-		{Title: "Canonical (CPID)", Width: 34},
+		{Title: "Merge From", Width: 38},
+		{Title: "Merge To", Width: 38},
+		{Title: "Canonical (CPID)", Width: 38},
 		{Title: "Reason", Width: 10},
 	}
 
 	rows := make([]table.Row, len(merges))
 	for i, merge := range merges {
-		// Truncate long profile IDs if needed
-		from := truncate(merge.MergeFrom, 32)
-		to := truncate(merge.MergeTo, 32)
-		cpid := truncate(merge.CanonicalProfileID, 32)
 		rows[i] = table.Row{
-			from,
-			to,
-			cpid,
+			merge.MergeFrom,
+			merge.MergeTo,
+			merge.CanonicalProfileID,
 			merge.Reason,
 		}
 	}
