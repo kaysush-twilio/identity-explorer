@@ -10,8 +10,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/kaysush-twilo/identity-explorer/internal/dynamo"
-	"github.com/kaysush-twilo/identity-explorer/internal/models"
+	"github.com/kaysush-twilio/identity-explorer/internal/dynamo"
+	"github.com/kaysush-twilio/identity-explorer/internal/models"
 )
 
 // AppState represents the current state of the application

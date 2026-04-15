@@ -15,20 +15,20 @@ A TUI (Terminal User Interface) application for exploring Identity Service data 
 ### Using Homebrew (macOS/Linux)
 
 ```bash
-brew tap kaysush-twilo/tap
+brew tap kaysush-twilio/tap
 brew install identity-explorer
 ```
 
 ### Download Binary
 
-Download the latest release from the [Releases page](https://github.com/kaysush-twilo/identity-explorer/releases).
+Download the latest release from the [Releases page](https://github.com/kaysush-twilio/identity-explorer/releases).
 
 ### Build from Source
 
 Requires Go 1.22+
 
 ```bash
-git clone https://github.com/kaysush-twilo/identity-explorer.git
+git clone https://github.com/kaysush-twilio/identity-explorer.git
 cd identity-explorer
 make build
 ```

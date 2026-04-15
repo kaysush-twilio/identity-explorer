@@ -53,7 +53,7 @@ changelog:
 
 release:
   github:
-    owner: kaysush-twilo
+    owner: kaysush-twilio
     name: identity-explorer
   draft: false
   prerelease: auto
@@ -62,11 +62,11 @@ release:
 brews:
   - name: identity-explorer
     repository:
-      owner: kaysush-twilo
+      owner: kaysush-twilio
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
-    homepage: "https://github.com/kaysush-twilo/identity-explorer"
+    homepage: "https://github.com/kaysush-twilio/identity-explorer"
     description: "TUI tool for exploring Identity Service data in DynamoDB"
     license: "MIT"
     skip_upload: auto

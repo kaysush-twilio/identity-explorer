@@ -5,7 +5,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/kaysush-twilo/identity-explorer/internal/ui"
+	"github.com/kaysush-twilio/identity-explorer/internal/ui"
 )
 
 var (

@@ -11,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/kaysush-twilo/identity-explorer/internal/models"
+	"github.com/kaysush-twilio/identity-explorer/internal/models"
 )
 
 // Client wraps the DynamoDB client with identity-specific operations

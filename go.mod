@@ -1,4 +1,4 @@
-module github.com/kaysush-twilo/identity-explorer
+module github.com/kaysush-twilio/identity-explorer
 
 go 1.25.5
 
