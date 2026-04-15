@@ -259,10 +259,14 @@ func (c *Client) QueryAllMergesForProfile(ctx context.Context, accountSID, store
 		}
 	}
 
-	// If we have a canonical link, query the merge item (NC#) for each merged profile ID
+	// If we have a canonical link with merged profiles, query the NC# item for each
 	// This gives us the detailed merge records (MergeFrom, MergeTo, Reason, etc.)
-	if canonicalLink != nil && len(canonicalLink.MergedProfileIDs) > 0 {
+	if canonicalLink != nil {
 		for _, mergedProfileID := range canonicalLink.MergedProfileIDs {
+			// Skip if empty
+			if mergedProfileID == "" {
+				continue
+			}
 			// Query the NC# item for this merged profile
 			mergeItems, err := c.QueryMergesByProfileID(ctx, accountSID, storeID, mergedProfileID)
 			if err != nil {

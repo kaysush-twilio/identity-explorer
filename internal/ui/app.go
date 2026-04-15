@@ -591,19 +591,23 @@ func (m Model) createMappingsTable(mappings []models.Mapping) table.Model {
 
 func (m Model) createMergesTable(merges []models.Merge) table.Model {
 	columns := []table.Column{
-		{Title: "Merge From", Width: 38},
-		{Title: "Merge To", Width: 38},
-		{Title: "Reason", Width: 12},
-		{Title: "Created At", Width: 25},
+		{Title: "Merge From", Width: 34},
+		{Title: "Merge To", Width: 34},
+		{Title: "Canonical (CPID)", Width: 34},
+		{Title: "Reason", Width: 10},
 	}
 
 	rows := make([]table.Row, len(merges))
 	for i, merge := range merges {
+		// Truncate long profile IDs if needed
+		from := truncate(merge.MergeFrom, 32)
+		to := truncate(merge.MergeTo, 32)
+		cpid := truncate(merge.CanonicalProfileID, 32)
 		rows[i] = table.Row{
-			merge.MergeFrom,
-			merge.MergeTo,
+			from,
+			to,
+			cpid,
 			merge.Reason,
-			merge.CreatedAt.Format("2006-01-02 15:04:05"),
 		}
 	}
 
@@ -735,7 +739,8 @@ func (m Model) renderResults() string {
 	if m.queryResult.CanonicalLink != nil {
 		b.WriteString(WarningStyle.Render("Canonical Profile: "+m.queryResult.CanonicalLink.CanonicalProfileID) + "\n")
 		if len(m.queryResult.CanonicalLink.MergedProfileIDs) > 0 {
-			b.WriteString(SubtitleStyle.Render("Merged Profiles: "+strings.Join(m.queryResult.CanonicalLink.MergedProfileIDs, ", ")) + "\n")
+			mergeCount := len(m.queryResult.CanonicalLink.MergedProfileIDs)
+			b.WriteString(SubtitleStyle.Render(fmt.Sprintf("Merged Profiles: %d profiles merged into this canonical", mergeCount)) + "\n")
 		}
 		b.WriteString("\n")
 	}
@@ -843,4 +848,15 @@ func wrapText(text string, width int) string {
 	}
 
 	return result.String()
+}
+
+// truncate shortens a string to maxLen, adding "..." if truncated
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
 }
