@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/kaysush-twilio/identity-explorer/internal/dynamo"
@@ -34,7 +35,18 @@ type QueryMode int
 const (
 	ModeQueryProfile QueryMode = iota
 	ModeQueryIdentifier
+	ModeUnset QueryMode = -1
 )
+
+// Config holds CLI options to prefill the UI
+type Config struct {
+	Mode       string // "profile" or "identifier"
+	AccountID  string
+	StoreID    string
+	ProfileID  string
+	IDType     string
+	IDValue    string
+}
 
 // Model represents the application state
 type Model struct {
@@ -69,6 +81,9 @@ type Model struct {
 	// Profile selection (for identifier query with multiple matches)
 	profileMatches   []string
 	selectedProfile  int
+
+	// Error viewport for scrolling long errors
+	errorViewport viewport.Model
 }
 
 // Message types
@@ -86,6 +101,11 @@ type profilesFoundMsg struct {
 
 // NewModel creates a new application model
 func NewModel() Model {
+	return NewModelWithConfig(Config{})
+}
+
+// NewModelWithConfig creates a new application model with prefilled values
+func NewModelWithConfig(cfg Config) Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7C3AED"))
@@ -99,9 +119,19 @@ func NewModel() Model {
 		profileInputs[i] = ti
 	}
 	profileInputs[0].Placeholder = "Account ID (e.g., AC...)"
-	profileInputs[0].Focus()
 	profileInputs[1].Placeholder = "Store ID"
 	profileInputs[2].Placeholder = "Profile ID"
+
+	// Prefill profile inputs from config
+	if cfg.AccountID != "" {
+		profileInputs[0].SetValue(cfg.AccountID)
+	}
+	if cfg.StoreID != "" {
+		profileInputs[1].SetValue(cfg.StoreID)
+	}
+	if cfg.ProfileID != "" {
+		profileInputs[2].SetValue(cfg.ProfileID)
+	}
 
 	// Identifier inputs: AccountID, StoreID, IDType, IDValue
 	identifierInputs := make([]textinput.Model, 4)
@@ -112,18 +142,60 @@ func NewModel() Model {
 		identifierInputs[i] = ti
 	}
 	identifierInputs[0].Placeholder = "Account ID (e.g., AC...)"
-	identifierInputs[0].Focus()
 	identifierInputs[1].Placeholder = "Store ID"
 	identifierInputs[2].Placeholder = "ID Type (e.g., email, phone)"
 	identifierInputs[3].Placeholder = "ID Value (e.g., user@example.com)"
 
+	// Prefill identifier inputs from config
+	if cfg.AccountID != "" {
+		identifierInputs[0].SetValue(cfg.AccountID)
+	}
+	if cfg.StoreID != "" {
+		identifierInputs[1].SetValue(cfg.StoreID)
+	}
+	if cfg.IDType != "" {
+		identifierInputs[2].SetValue(cfg.IDType)
+	}
+	if cfg.IDValue != "" {
+		identifierInputs[3].SetValue(cfg.IDValue)
+	}
+
+	// Determine initial state based on config
+	initialState := StateModeSelection
+	initialMode := ModeUnset
+	selectedMode := 0
+
+	switch strings.ToLower(cfg.Mode) {
+	case "profile":
+		initialState = StateProfileInput
+		initialMode = ModeQueryProfile
+		selectedMode = 0
+		profileInputs[0].Focus()
+	case "identifier":
+		initialState = StateIdentifierInput
+		initialMode = ModeQueryIdentifier
+		selectedMode = 1
+		identifierInputs[0].Focus()
+	default:
+		profileInputs[0].Focus()
+	}
+
+	// Error viewport
+	vp := viewport.New(80, 10)
+	vp.Style = lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#EF4444")).
+		Padding(1)
+
 	return Model{
-		state:            StateModeSelection,
+		state:            initialState,
+		mode:             initialMode,
 		modeOptions:      []string{"Query Profile", "Query Identifier"},
-		selectedMode:     0,
+		selectedMode:     selectedMode,
 		profileInputs:    profileInputs,
 		identifierInputs: identifierInputs,
 		spinner:          s,
+		errorViewport:    vp,
 	}
 }
 
@@ -136,7 +208,40 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		return m.handleKeyPress(msg)
+		// Handle global keys first
+		switch msg.String() {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "esc":
+			if m.state != StateModeSelection {
+				m.state = StateModeSelection
+				m.err = nil
+				return m, nil
+			}
+			return m, tea.Quit
+		}
+
+		// For input states, handle navigation keys but let other keys pass through to inputs
+		switch m.state {
+		case StateModeSelection:
+			return m.handleModeSelection(msg)
+		case StateProfileInput:
+			return m.handleProfileInput(msg)
+		case StateIdentifierInput:
+			return m.handleIdentifierInput(msg)
+		case StateProfileSelection:
+			return m.handleProfileSelection(msg)
+		case StateProfileResult, StateIdentifierResult:
+			return m.handleResultNavigation(msg)
+		case StateError:
+			// Press any key to go back from error
+			if msg.String() == "q" {
+				m.state = StateModeSelection
+				m.err = nil
+			}
+			return m, nil
+		}
+		return m, nil
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -196,42 +301,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "ctrl+c", "q":
-		if m.state == StateModeSelection {
-			return m, tea.Quit
-		}
-		// Reset to mode selection
-		m.state = StateModeSelection
-		m.err = nil
-		m.queryResult = nil
-		return m, nil
-
-	case "esc":
-		if m.state != StateModeSelection {
-			m.state = StateModeSelection
-			m.err = nil
-			return m, nil
-		}
-		return m, tea.Quit
-	}
-
-	switch m.state {
-	case StateModeSelection:
-		return m.handleModeSelection(msg)
-	case StateProfileInput:
-		return m.handleProfileInput(msg)
-	case StateIdentifierInput:
-		return m.handleIdentifierInput(msg)
-	case StateProfileSelection:
-		return m.handleProfileSelection(msg)
-	case StateProfileResult, StateIdentifierResult:
-		return m.handleResultNavigation(msg)
-	}
-
-	return m, nil
-}
 
 func (m Model) handleModeSelection(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
@@ -259,12 +328,12 @@ func (m Model) handleModeSelection(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleProfileInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "tab", "down":
+	case "tab":
 		m.profileInputs[m.profileFocused].Blur()
 		m.profileFocused = (m.profileFocused + 1) % len(m.profileInputs)
 		m.profileInputs[m.profileFocused].Focus()
 		return m, textinput.Blink
-	case "shift+tab", "up":
+	case "shift+tab":
 		m.profileInputs[m.profileFocused].Blur()
 		m.profileFocused--
 		if m.profileFocused < 0 {
@@ -288,17 +357,21 @@ func (m Model) handleProfileInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.loadingMsg = "Querying profile data..."
 		return m, m.queryProfileData(profileID)
 	}
-	return m, nil
+
+	// Forward other key events to the focused text input
+	var cmd tea.Cmd
+	m.profileInputs[m.profileFocused], cmd = m.profileInputs[m.profileFocused].Update(msg)
+	return m, cmd
 }
 
 func (m Model) handleIdentifierInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "tab", "down":
+	case "tab":
 		m.identifierInputs[m.identifierFocused].Blur()
 		m.identifierFocused = (m.identifierFocused + 1) % len(m.identifierInputs)
 		m.identifierInputs[m.identifierFocused].Focus()
 		return m, textinput.Blink
-	case "shift+tab", "up":
+	case "shift+tab":
 		m.identifierInputs[m.identifierFocused].Blur()
 		m.identifierFocused--
 		if m.identifierFocused < 0 {
@@ -323,7 +396,11 @@ func (m Model) handleIdentifierInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.loadingMsg = "Looking up profiles..."
 		return m, m.queryIdentifier()
 	}
-	return m, nil
+
+	// Forward other key events to the focused text input
+	var cmd tea.Cmd
+	m.identifierInputs[m.identifierFocused], cmd = m.identifierInputs[m.identifierFocused].Update(msg)
+	return m, cmd
 }
 
 func (m Model) handleProfileSelection(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -659,5 +736,59 @@ func (m Model) renderProfileSelection() string {
 }
 
 func (m Model) renderError() string {
-	return ErrorStyle.Render(fmt.Sprintf("Error: %v", m.err))
+	var b strings.Builder
+	b.WriteString(ErrorStyle.Render("Error occurred:") + "\n\n")
+
+	// Show full error message with word wrapping
+	errMsg := fmt.Sprintf("%+v", m.err)
+
+	// Wrap long lines for readability
+	maxWidth := 80
+	if m.width > 20 {
+		maxWidth = m.width - 10
+	}
+	wrapped := wrapText(errMsg, maxWidth)
+
+	b.WriteString(lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#EF4444")).
+		Padding(1).
+		Width(maxWidth).
+		Render(wrapped))
+
+	b.WriteString("\n\n" + HelpStyle.Render("Press 'q' or 'esc' to go back"))
+	return b.String()
+}
+
+// wrapText wraps text to the specified width
+func wrapText(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+
+	var result strings.Builder
+	lines := strings.Split(text, "\n")
+
+	for i, line := range lines {
+		if i > 0 {
+			result.WriteString("\n")
+		}
+
+		for len(line) > width {
+			// Find last space before width
+			breakPoint := width
+			for j := width; j > 0; j-- {
+				if line[j] == ' ' {
+					breakPoint = j
+					break
+				}
+			}
+			result.WriteString(line[:breakPoint])
+			result.WriteString("\n")
+			line = strings.TrimLeft(line[breakPoint:], " ")
+		}
+		result.WriteString(line)
+	}
+
+	return result.String()
 }

@@ -71,7 +71,7 @@ func (c *Client) QueryMappingsByProfileID(ctx context.Context, storeID, profileI
 
 	result, err := c.db.Query(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query mappings: %w", err)
+		return nil, fmt.Errorf("failed to query mappings table '%s' with PK='%s': %w", c.mappingsTable, pk, err)
 	}
 
 	var mappings []models.Mapping
@@ -125,7 +125,7 @@ func (c *Client) QueryProfileIDsByIdentifier(ctx context.Context, storeID, idTyp
 
 	result, err := c.db.Query(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query profiles by identifier: %w", err)
+		return nil, fmt.Errorf("failed to query profiles by identifier from table '%s' with PK='%s': %w", c.mappingsTable, pk, err)
 	}
 
 	profileIDs := make(map[string]struct{})
@@ -157,7 +157,7 @@ func (c *Client) QueryMergesByProfileID(ctx context.Context, accountSID, storeID
 
 	result, err := c.db.Query(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query merges: %w", err)
+		return nil, fmt.Errorf("failed to query merges from table '%s' with PK='%s': %w", c.mergesTable, pk, err)
 	}
 
 	var merges []models.Merge
@@ -212,7 +212,7 @@ func (c *Client) QueryCanonicalLink(ctx context.Context, accountSID, storeID, ca
 
 	result, err := c.db.Query(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query canonical link: %w", err)
+		return nil, fmt.Errorf("failed to query canonical link from table '%s' with PK='%s': %w", c.mergesTable, pk, err)
 	}
 
 	if len(result.Items) == 0 {

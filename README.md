@@ -8,6 +8,8 @@ A TUI (Terminal User Interface) application for exploring Identity Service data 
 - **Query by Identifier**: Find profiles associated with a specific identifier (email, phone, etc.)
 - Interactive profile selection when multiple matches are found
 - Formatted table display for mappings and merges
+- Command-line prefill for quick queries
+- Auto-constructed table names from environment/region/cell
 - Cross-platform support (Linux, macOS, Windows)
 
 ## Installation
@@ -33,35 +35,129 @@ cd identity-explorer
 make build
 ```
 
-## Usage
-
-Run the application:
+## Quick Start
 
 ```bash
-identity-explorer
+# Basic usage - launches interactive TUI
+identity-explorer --profile my-aws-profile --env dev --region us-east-1 --cell cell-1
+
+# Query a profile directly (skips mode selection)
+identity-explorer --profile my-aws-profile \
+  --env dev --region us-east-1 --cell cell-1 \
+  --mode profile \
+  --account-id AC123456 --store-id my-store --profile-id prof-uuid
+
+# Query by identifier
+identity-explorer --profile my-aws-profile \
+  --env dev --region us-east-1 --cell cell-1 \
+  --mode identifier \
+  --account-id AC123456 --store-id my-store \
+  --id-type email --id-value user@example.com
 ```
 
-### Environment Variables
-
-Configure the DynamoDB tables using environment variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MAPPINGS_TABLE` | `local.IdentityMappings.v1` | DynamoDB table for identity mappings |
-| `MERGES_TABLE` | `local.IdentityMerges.v1` | DynamoDB table for profile merges |
+## Command-Line Options
 
 ### AWS Configuration
 
-The tool uses the AWS SDK's default credential chain. Configure your AWS credentials using:
+| Flag | Environment Variable | Description |
+|------|---------------------|-------------|
+| `--profile` | `AWS_PROFILE` | AWS profile to use |
+| `--region` | `AWS_REGION` | AWS region |
 
-- Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
-- AWS credentials file (`~/.aws/credentials`)
-- IAM role (when running on AWS infrastructure)
+### Table Configuration
 
-Set the AWS region:
+Tables can be configured in two ways:
+
+**Option 1: Environment/Cell-based naming (recommended)**
+
+| Flag | Environment Variable | Description |
+|------|---------------------|-------------|
+| `--env` | `IDENTITY_ENV` | Environment (dev, stage, prod) |
+| `--cell` | `IDENTITY_CELL` | Cell identifier (cell-1, cell-2) |
+
+Tables are auto-constructed as: `{env}-{region}-{cell}.IdentityMappings.v1`
+
+Example: `dev-us-east-1-cell-1.IdentityMappings.v1`
+
+**Option 2: Explicit table names**
+
+| Flag | Environment Variable | Description |
+|------|---------------------|-------------|
+| `--mappings-table` | `MAPPINGS_TABLE` | Full DynamoDB mappings table name |
+| `--merges-table` | `MERGES_TABLE` | Full DynamoDB merges table name |
+
+### Query Prefill Options
+
+| Flag | Description |
+|------|-------------|
+| `--mode` | Query mode: `profile` or `identifier` (skips mode selection screen) |
+| `--account-id` | Account ID to prefill |
+| `--store-id` | Store ID to prefill |
+| `--profile-id` | Profile ID to prefill (for profile mode) |
+| `--id-type` | Identifier type to prefill (e.g., email, phone) |
+| `--id-value` | Identifier value to prefill |
+
+### Other Options
+
+| Flag | Description |
+|------|-------------|
+| `--version`, `-v` | Show version information |
+| `-h`, `--help` | Show help |
+
+## Usage Examples
+
+### Interactive Mode
 
 ```bash
+# Just launch the TUI with table configuration
+identity-explorer --env dev --region us-east-1 --cell cell-1
+
+# Prefill common fields, but still use interactive mode selection
+identity-explorer --env dev --region us-east-1 --cell cell-1 \
+  --account-id AC123456 --store-id my-store
+```
+
+### Direct Query Mode
+
+```bash
+# Query profile - all fields prefilled, just press Enter
+identity-explorer --env dev --region us-east-1 --cell cell-1 \
+  --mode profile \
+  --account-id AC123456 \
+  --store-id my-store \
+  --profile-id mem_profile_01abc123
+
+# Query identifier - find profiles by email
+identity-explorer --env dev --region us-east-1 --cell cell-1 \
+  --mode identifier \
+  --account-id AC123456 \
+  --store-id my-store \
+  --id-type email \
+  --id-value user@example.com
+```
+
+### Using Environment Variables
+
+```bash
+# Set common configuration once
+export AWS_PROFILE=my-aws-profile
 export AWS_REGION=us-east-1
+export IDENTITY_ENV=dev
+export IDENTITY_CELL=cell-1
+
+# Then run queries without repeating flags
+identity-explorer --mode profile --account-id AC123 --store-id store1 --profile-id prof-uuid
+```
+
+### Using Explicit Table Names
+
+```bash
+# For non-standard table naming or cross-account access
+identity-explorer \
+  --mappings-table custom-IdentityMappings \
+  --merges-table custom-IdentityMerges \
+  --mode profile \
+  --account-id AC123 --store-id store1 --profile-id prof-uuid
 ```
 
 ## Query Modes
@@ -104,7 +200,7 @@ Find profiles by a specific identifier:
 | `Shift+Tab` | Previous input field |
 | `Enter` | Select / Submit |
 | `Esc` | Go back |
-| `q` | Quit (from main menu) |
+| `q` | Go back / Quit (from main menu) |
 | `Ctrl+C` | Force quit |
 
 ## Development
@@ -129,6 +225,9 @@ make test
 
 # Lint
 make lint
+
+# Install locally
+make install
 
 # Create snapshot release
 make release-snapshot
@@ -157,6 +256,28 @@ identity-explorer/
 ├── Makefile
 └── README.md
 ```
+
+## Troubleshooting
+
+### Common Errors
+
+**ResourceNotFoundException: Requested resource not found**
+- Check that `--env`, `--region`, and `--cell` are correct
+- Verify the table exists: `aws dynamodb describe-table --table-name {env}-{region}-{cell}.IdentityMappings.v1`
+
+**AccessDeniedException**
+- Verify your AWS profile has DynamoDB read permissions
+- Check you're using the correct AWS profile: `--profile your-profile`
+
+**No profiles found for the given identifier**
+- The identifier may not exist in the system
+- Check the ID type matches exactly (e.g., `email` not `Email`)
+
+### Debug Tips
+
+- Use `--help` to see all available options
+- Check which tables are being queried - errors show the full table name and PK
+- Verify AWS credentials: `aws sts get-caller-identity --profile your-profile`
 
 ## License
 
