@@ -236,28 +236,51 @@ func (c *Client) QueryCanonicalLink(ctx context.Context, accountSID, storeID, ca
 // QueryAllMergesForProfile fetches all merge-related data for a profile
 // This includes both NC# (non-canonical) and C# (canonical) queries
 func (c *Client) QueryAllMergesForProfile(ctx context.Context, accountSID, storeID, profileID string) ([]models.Merge, *models.CanonicalLink, error) {
-	// First, check if this profile has been merged (NC# lookup)
+	var allMerges []models.Merge
+
+	// First, check if this profile has been merged into another (NC# lookup for this profile)
 	merges, err := c.QueryMergesByProfileID(ctx, accountSID, storeID, profileID)
 	if err != nil {
 		return nil, nil, err
 	}
+	allMerges = append(allMerges, merges...)
 
-	// Then check if this profile is a canonical profile (C# lookup)
+	// Check if this profile is a canonical profile (C# lookup)
 	canonicalLink, err := c.QueryCanonicalLink(ctx, accountSID, storeID, profileID)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// If we found a merge record, also look up the canonical link for the target
-	if len(merges) > 0 && merges[0].CanonicalProfileID != "" {
+	// If we found a merge record pointing to a different canonical, look up that canonical link
+	if len(merges) > 0 && merges[0].CanonicalProfileID != "" && merges[0].CanonicalProfileID != profileID {
 		targetLink, err := c.QueryCanonicalLink(ctx, accountSID, storeID, merges[0].CanonicalProfileID)
-		if err != nil {
-			return merges, canonicalLink, nil // Don't fail, just return what we have
-		}
-		if targetLink != nil && canonicalLink == nil {
+		if err == nil && targetLink != nil {
 			canonicalLink = targetLink
 		}
 	}
 
-	return merges, canonicalLink, nil
+	// If we have a canonical link, query the merge item (NC#) for each merged profile ID
+	// This gives us the detailed merge records (MergeFrom, MergeTo, Reason, etc.)
+	if canonicalLink != nil && len(canonicalLink.MergedProfileIDs) > 0 {
+		for _, mergedProfileID := range canonicalLink.MergedProfileIDs {
+			// Query the NC# item for this merged profile
+			mergeItems, err := c.QueryMergesByProfileID(ctx, accountSID, storeID, mergedProfileID)
+			if err != nil {
+				continue // Don't fail on individual lookups
+			}
+			allMerges = append(allMerges, mergeItems...)
+		}
+	}
+
+	// Deduplicate merges by MergeID
+	seen := make(map[string]bool)
+	var uniqueMerges []models.Merge
+	for _, m := range allMerges {
+		if !seen[m.MergeID] {
+			seen[m.MergeID] = true
+			uniqueMerges = append(uniqueMerges, m)
+		}
+	}
+
+	return uniqueMerges, canonicalLink, nil
 }

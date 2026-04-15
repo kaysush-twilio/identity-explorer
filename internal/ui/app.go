@@ -74,9 +74,10 @@ type Model struct {
 	loadingMsg string
 
 	// Results
-	queryResult    *models.QueryResult
-	mappingsTable  table.Model
-	mergesTable    table.Model
+	queryResult      *models.QueryResult
+	mappingsTable    table.Model
+	mergesTable      table.Model
+	focusedTable     int // 0 = mappings, 1 = merges
 
 	// Profile selection (for identifier query with multiple matches)
 	profileMatches   []string
@@ -422,8 +423,27 @@ func (m Model) handleProfileSelection(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleResultNavigation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "tab":
+		// Toggle between mappings and merges tables
+		m.focusedTable = (m.focusedTable + 1) % 2
+		if m.focusedTable == 0 {
+			m.mappingsTable.Focus()
+			m.mergesTable.Blur()
+		} else {
+			m.mappingsTable.Blur()
+			m.mergesTable.Focus()
+		}
+		return m, nil
+	}
+
+	// Forward navigation to the focused table
 	var cmd tea.Cmd
-	m.mappingsTable, cmd = m.mappingsTable.Update(msg)
+	if m.focusedTable == 0 {
+		m.mappingsTable, cmd = m.mappingsTable.Update(msg)
+	} else {
+		m.mergesTable, cmd = m.mergesTable.Update(msg)
+	}
 	return m, cmd
 }
 
@@ -445,7 +465,11 @@ func (m Model) updateIdentifierInputs(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateResultView(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	m.mappingsTable, cmd = m.mappingsTable.Update(msg)
+	if m.focusedTable == 0 {
+		m.mappingsTable, cmd = m.mappingsTable.Update(msg)
+	} else {
+		m.mergesTable, cmd = m.mergesTable.Update(msg)
+	}
 	return m, cmd
 }
 
@@ -534,11 +558,20 @@ func (m Model) createMappingsTable(mappings []models.Mapping) table.Model {
 		}
 	}
 
+	// Calculate height - show more rows, up to 15
+	height := len(rows) + 1
+	if height > 15 {
+		height = 15
+	}
+	if height < 3 {
+		height = 3
+	}
+
 	t := table.New(
 		table.WithColumns(columns),
 		table.WithRows(rows),
 		table.WithFocused(true),
-		table.WithHeight(min(len(rows)+1, 10)),
+		table.WithHeight(height),
 	)
 
 	s := table.DefaultStyles()
@@ -574,11 +607,20 @@ func (m Model) createMergesTable(merges []models.Merge) table.Model {
 		}
 	}
 
+	// Calculate height - show more rows, up to 15
+	height := len(rows) + 1
+	if height > 15 {
+		height = 15
+	}
+	if height < 3 {
+		height = 3
+	}
+
 	t := table.New(
 		table.WithColumns(columns),
 		table.WithRows(rows),
 		table.WithFocused(false),
-		table.WithHeight(min(len(rows)+1, 10)),
+		table.WithHeight(height),
 	)
 
 	s := table.DefaultStyles()
@@ -699,7 +741,11 @@ func (m Model) renderResults() string {
 	}
 
 	// Mappings table
-	b.WriteString(TitleStyle.Render("Mappings") + fmt.Sprintf(" (%d items)\n", len(m.queryResult.Mappings)))
+	mappingsTitle := "Mappings"
+	if m.focusedTable == 0 {
+		mappingsTitle = "> Mappings"
+	}
+	b.WriteString(TitleStyle.Render(mappingsTitle) + fmt.Sprintf(" (%d items)\n", len(m.queryResult.Mappings)))
 	if len(m.queryResult.Mappings) == 0 {
 		b.WriteString(SubtitleStyle.Render("  No mappings found") + "\n\n")
 	} else {
@@ -707,12 +753,18 @@ func (m Model) renderResults() string {
 	}
 
 	// Merges table
-	b.WriteString(TitleStyle.Render("Merges") + fmt.Sprintf(" (%d items)\n", len(m.queryResult.Merges)))
+	mergesTitle := "Merges"
+	if m.focusedTable == 1 {
+		mergesTitle = "> Merges"
+	}
+	b.WriteString(TitleStyle.Render(mergesTitle) + fmt.Sprintf(" (%d items)\n", len(m.queryResult.Merges)))
 	if len(m.queryResult.Merges) == 0 {
 		b.WriteString(SubtitleStyle.Render("  No merges found") + "\n")
 	} else {
 		b.WriteString(m.mergesTable.View() + "\n")
 	}
+
+	b.WriteString("\n" + HelpStyle.Render("Tab to switch tables • Arrow keys to scroll • q/esc to go back"))
 
 	return b.String()
 }
