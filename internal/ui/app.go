@@ -52,7 +52,6 @@ type Config struct {
 type Model struct {
 	state          AppState
 	mode           QueryMode
-	client         *dynamo.Client
 	err            error
 	width          int
 	height         int
@@ -860,15 +859,4 @@ func wrapText(text string, width int) string {
 	}
 
 	return result.String()
-}
-
-// truncate shortens a string to maxLen, adding "..." if truncated
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen <= 3 {
-		return s[:maxLen]
-	}
-	return s[:maxLen-3] + "..."
 }

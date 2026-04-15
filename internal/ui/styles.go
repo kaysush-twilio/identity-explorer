@@ -9,7 +9,6 @@ var (
 	warningColor   = lipgloss.Color("#F59E0B")
 	errorColor     = lipgloss.Color("#EF4444")
 	mutedColor     = lipgloss.Color("#6B7280")
-	bgColor        = lipgloss.Color("#1F2937")
 
 	// Title styles
 	TitleStyle = lipgloss.NewStyle().
