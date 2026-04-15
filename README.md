@@ -38,31 +38,35 @@ make build
 ## Quick Start
 
 ```bash
-# Basic usage - launches interactive TUI
-identity-explorer --profile my-aws-profile --env dev --region us-east-1 --cell cell-1
+# Basic usage - launches interactive TUI (uses defaults: dev/us-east-1/cell-1)
+identity-explorer --profile my-aws-profile
 
 # Query a profile directly (skips mode selection)
 identity-explorer --profile my-aws-profile \
-  --env dev --region us-east-1 --cell cell-1 \
   --mode profile \
   --account-id AC123456 --store-id my-store --profile-id prof-uuid
 
 # Query by identifier
 identity-explorer --profile my-aws-profile \
-  --env dev --region us-east-1 --cell cell-1 \
   --mode identifier \
   --account-id AC123456 --store-id my-store \
   --id-type email --id-value user@example.com
+
+# Query in a different environment
+identity-explorer --profile my-aws-profile \
+  --env prod --region us-west-2 --cell cell-2 \
+  --mode profile \
+  --account-id AC123456 --store-id my-store --profile-id prof-uuid
 ```
 
 ## Command-Line Options
 
 ### AWS Configuration
 
-| Flag | Environment Variable | Description |
-|------|---------------------|-------------|
-| `--profile` | `AWS_PROFILE` | AWS profile to use |
-| `--region` | `AWS_REGION` | AWS region |
+| Flag | Environment Variable | Default | Description |
+|------|---------------------|---------|-------------|
+| `--profile` | `AWS_PROFILE` | - | AWS profile to use |
+| `--region` | `AWS_REGION` | `us-east-1` | AWS region |
 
 ### Table Configuration
 
@@ -70,10 +74,10 @@ Tables can be configured in two ways:
 
 **Option 1: Environment/Cell-based naming (recommended)**
 
-| Flag | Environment Variable | Description |
-|------|---------------------|-------------|
-| `--env` | `IDENTITY_ENV` | Environment (dev, stage, prod) |
-| `--cell` | `IDENTITY_CELL` | Cell identifier (cell-1, cell-2) |
+| Flag | Environment Variable | Default | Description |
+|------|---------------------|---------|-------------|
+| `--env` | `IDENTITY_ENV` | `dev` | Environment (dev, stage, prod) |
+| `--cell` | `IDENTITY_CELL` | `cell-1` | Cell identifier (cell-1, cell-2) |
 
 Tables are auto-constructed as: `{env}-{region}-{cell}.IdentityMappings.v1`
 
@@ -81,10 +85,10 @@ Example: `dev-us-east-1-cell-1.IdentityMappings.v1`
 
 **Option 2: Explicit table names**
 
-| Flag | Environment Variable | Description |
-|------|---------------------|-------------|
-| `--mappings-table` | `MAPPINGS_TABLE` | Full DynamoDB mappings table name |
-| `--merges-table` | `MERGES_TABLE` | Full DynamoDB merges table name |
+| Flag | Environment Variable | Default | Description |
+|------|---------------------|---------|-------------|
+| `--mappings-table` | `MAPPINGS_TABLE` | - | Full DynamoDB mappings table name (overrides env/cell) |
+| `--merges-table` | `MERGES_TABLE` | - | Full DynamoDB merges table name (overrides env/cell) |
 
 ### Query Prefill Options
 

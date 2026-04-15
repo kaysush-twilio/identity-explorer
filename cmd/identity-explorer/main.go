@@ -18,11 +18,11 @@ var (
 func main() {
 	// AWS/DynamoDB flags
 	awsProfile := flag.String("profile", "", "AWS profile to use (overrides AWS_PROFILE env var)")
-	region := flag.String("region", "", "AWS region to use (overrides AWS_REGION env var)")
+	region := flag.String("region", "us-east-1", "AWS region to use (overrides AWS_REGION env var)")
 
 	// Table configuration - can use explicit table names or env+cell to auto-construct
-	env := flag.String("env", "", "Environment (e.g., dev, stage, prod) - used to construct table names")
-	cell := flag.String("cell", "", "Cell identifier (e.g., cell-1, cell-2) - used to construct table names")
+	env := flag.String("env", "dev", "Environment (e.g., dev, stage, prod) - used to construct table names")
+	cell := flag.String("cell", "cell-1", "Cell identifier (e.g., cell-1, cell-2) - used to construct table names")
 	mappingsTable := flag.String("mappings-table", "", "DynamoDB mappings table name (overrides env/cell-based naming)")
 	mergesTable := flag.String("merges-table", "", "DynamoDB merges table name (overrides env/cell-based naming)")
 
@@ -72,22 +72,22 @@ func main() {
 	if *awsProfile != "" {
 		os.Setenv("AWS_PROFILE", *awsProfile)
 	}
-	if *region != "" {
-		os.Setenv("AWS_REGION", *region)
+
+	// Resolve values: flags have defaults, but env vars can override if flag is at default
+	resolvedRegion := *region
+	if envRegion := os.Getenv("AWS_REGION"); envRegion != "" && *region == "us-east-1" {
+		resolvedRegion = envRegion
+	}
+	os.Setenv("AWS_REGION", resolvedRegion)
+
+	resolvedEnv := *env
+	if envEnv := os.Getenv("IDENTITY_ENV"); envEnv != "" && *env == "dev" {
+		resolvedEnv = envEnv
 	}
 
-	// Resolve environment and cell (flags > env vars)
-	resolvedEnv := *env
-	if resolvedEnv == "" {
-		resolvedEnv = os.Getenv("IDENTITY_ENV")
-	}
 	resolvedCell := *cell
-	if resolvedCell == "" {
-		resolvedCell = os.Getenv("IDENTITY_CELL")
-	}
-	resolvedRegion := *region
-	if resolvedRegion == "" {
-		resolvedRegion = os.Getenv("AWS_REGION")
+	if envCell := os.Getenv("IDENTITY_CELL"); envCell != "" && *cell == "cell-1" {
+		resolvedCell = envCell
 	}
 
 	// Construct table names from env/region/cell if not explicitly provided
