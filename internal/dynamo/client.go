@@ -306,6 +306,102 @@ func (c *Client) ResolveCanonicalProfileID(ctx context.Context, accountSID, stor
 	}
 }
 
+// ShardCountResult represents the result of counting profiles for one shard
+type ShardCountResult struct {
+	Shard string
+	Count int
+	Error error
+}
+
+// CountProfilesInStoreByShard queries the GSI on Merges table for a specific shard value
+// and returns the count of profiles. The storeIDValue should be either "storeId" or "storeId#N"
+func (c *Client) CountProfilesInStoreByShard(ctx context.Context, storeIDValue string) (int, error) {
+	count := 0
+	var lastEvaluatedKey map[string]types.AttributeValue
+
+	for {
+		input := &dynamodb.QueryInput{
+			TableName:              aws.String(c.mergesTable),
+			IndexName:              aws.String("StoreID-SK-Index"),
+			KeyConditionExpression: aws.String("StoreID = :sid"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":sid": &types.AttributeValueMemberS{Value: storeIDValue},
+			},
+			Select:            types.SelectCount,
+			ExclusiveStartKey: lastEvaluatedKey,
+		}
+
+		result, err := c.db.Query(ctx, input)
+		if err != nil {
+			return count, fmt.Errorf("failed to query GSI for StoreID='%s': %w", storeIDValue, err)
+		}
+
+		count += int(result.Count)
+		lastEvaluatedKey = result.LastEvaluatedKey
+
+		if lastEvaluatedKey == nil {
+			break
+		}
+
+		// Small delay between pagination requests to avoid throttling
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	return count, nil
+}
+
+// CountProfilesInStoreWithCallback queries all shards in parallel and calls the callback for each result
+// The callback receives intermediate results as they complete
+func (c *Client) CountProfilesInStoreWithCallback(ctx context.Context, storeID string, callback func(ShardCountResult)) int {
+	// Generate all shard values: storeId, storeId#0, storeId#1, ..., storeId#9
+	shards := make([]string, 11)
+	shards[0] = storeID
+	for i := 0; i < 10; i++ {
+		shards[i+1] = fmt.Sprintf("%s#%d", storeID, i)
+	}
+
+	var wg sync.WaitGroup
+	resultChan := make(chan ShardCountResult, 11)
+
+	// Limit concurrency to avoid hitting DynamoDB too hard
+	semaphore := make(chan struct{}, 3) // Max 3 concurrent queries
+
+	for _, shard := range shards {
+		wg.Add(1)
+		go func(s string) {
+			defer wg.Done()
+			semaphore <- struct{}{}        // Acquire
+			defer func() { <-semaphore }() // Release
+
+			count, err := c.CountProfilesInStoreByShard(ctx, s)
+			resultChan <- ShardCountResult{
+				Shard: s,
+				Count: count,
+				Error: err,
+			}
+		}(shard)
+	}
+
+	// Close channel when all queries complete
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Process results and call callback
+	totalCount := 0
+	for result := range resultChan {
+		if callback != nil {
+			callback(result)
+		}
+		if result.Error == nil {
+			totalCount += result.Count
+		}
+	}
+
+	return totalCount
+}
+
 // QueryAllMergesForProfile fetches all merge-related data for a profile
 // Flow:
 // 1. Resolve the canonical profile ID for the input profile

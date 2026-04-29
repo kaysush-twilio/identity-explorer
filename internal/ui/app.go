@@ -22,10 +22,12 @@ const (
 	StateModeSelection AppState = iota
 	StateProfileInput
 	StateIdentifierInput
+	StateCountInput
 	StateLoading
 	StateProfileResult
 	StateIdentifierResult
 	StateProfileSelection
+	StateCountResult
 	StateError
 )
 
@@ -35,6 +37,7 @@ type QueryMode int
 const (
 	ModeQueryProfile QueryMode = iota
 	ModeQueryIdentifier
+	ModeCountProfiles
 	ModeUnset QueryMode = -1
 )
 
@@ -68,6 +71,10 @@ type Model struct {
 	identifierInputs  []textinput.Model
 	identifierFocused int
 
+	// Input fields for count query
+	countInputs  []textinput.Model
+	countFocused int
+
 	// Loading state
 	spinner    spinner.Model
 	loadingMsg string
@@ -81,6 +88,11 @@ type Model struct {
 	// Profile selection (for identifier query with multiple matches)
 	profileMatches   []string
 	selectedProfile  int
+
+	// Count results
+	countResults     []dynamo.ShardCountResult
+	countTotal       int
+	countComplete    bool
 
 	// Error viewport for scrolling long errors
 	errorViewport viewport.Model
@@ -97,6 +109,10 @@ type errorMsg struct {
 
 type profilesFoundMsg struct {
 	profiles []string
+}
+
+type countShardResultMsg struct {
+	result dynamo.ShardCountResult
 }
 
 // NewModel creates a new application model
@@ -160,6 +176,16 @@ func NewModelWithConfig(cfg Config) Model {
 		identifierInputs[3].SetValue(cfg.IDValue)
 	}
 
+	// Count inputs: StoreID only
+	countInputs := make([]textinput.Model, 1)
+	countInputs[0] = textinput.New()
+	countInputs[0].CharLimit = 156
+	countInputs[0].Width = 50
+	countInputs[0].Placeholder = "Store ID"
+	if cfg.StoreID != "" {
+		countInputs[0].SetValue(cfg.StoreID)
+	}
+
 	// Determine initial state based on config
 	initialState := StateModeSelection
 	initialMode := ModeUnset
@@ -190,10 +216,11 @@ func NewModelWithConfig(cfg Config) Model {
 	return Model{
 		state:            initialState,
 		mode:             initialMode,
-		modeOptions:      []string{"Query Profile", "Query Identifier"},
+		modeOptions:      []string{"Query Profile", "Query Identifier", "Count Store Profiles"},
 		selectedMode:     selectedMode,
 		profileInputs:    profileInputs,
 		identifierInputs: identifierInputs,
+		countInputs:      countInputs,
 		spinner:          s,
 		errorViewport:    vp,
 	}
@@ -229,10 +256,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleProfileInput(msg)
 		case StateIdentifierInput:
 			return m.handleIdentifierInput(msg)
+		case StateCountInput:
+			return m.handleCountInput(msg)
 		case StateProfileSelection:
 			return m.handleProfileSelection(msg)
 		case StateProfileResult, StateIdentifierResult:
 			return m.handleResultNavigation(msg)
+		case StateCountResult:
+			if msg.String() == "q" || msg.String() == "esc" {
+				m.state = StateModeSelection
+				m.countResults = nil
+				m.countTotal = 0
+				m.countComplete = false
+			}
+			return m, nil
 		case StateError:
 			// Press any key to go back from error
 			if msg.String() == "q" {
@@ -286,6 +323,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		m.state = StateError
 		return m, nil
+
+	case countShardResultMsg:
+		m.countResults = append(m.countResults, msg.result)
+		if msg.result.Error == nil {
+			m.countTotal += msg.result.Count
+		}
+		// Mark complete when all 11 shards have been queried
+		if len(m.countResults) >= 11 {
+			m.countComplete = true
+		}
+		return m, nil
 	}
 
 	// Handle input updates based on state
@@ -294,6 +342,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateProfileInputs(msg)
 	case StateIdentifierInput:
 		return m.updateIdentifierInputs(msg)
+	case StateCountInput:
+		return m.updateCountInputs(msg)
 	case StateProfileResult, StateIdentifierResult:
 		return m.updateResultView(msg)
 	}
@@ -314,12 +364,16 @@ func (m Model) handleModeSelection(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		m.mode = QueryMode(m.selectedMode)
-		if m.mode == ModeQueryProfile {
+		switch m.mode {
+		case ModeQueryProfile:
 			m.state = StateProfileInput
 			m.profileInputs[0].Focus()
-		} else {
+		case ModeQueryIdentifier:
 			m.state = StateIdentifierInput
 			m.identifierInputs[0].Focus()
+		case ModeCountProfiles:
+			m.state = StateCountInput
+			m.countInputs[0].Focus()
 		}
 		return m, textinput.Blink
 	}
@@ -421,6 +475,30 @@ func (m Model) handleProfileSelection(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleCountInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		storeID := strings.TrimSpace(m.countInputs[0].Value())
+		if storeID == "" {
+			m.err = fmt.Errorf("Store ID is required")
+			m.state = StateError
+			return m, nil
+		}
+
+		// Reset count state
+		m.countResults = nil
+		m.countTotal = 0
+		m.countComplete = false
+		m.state = StateCountResult
+		return m, m.queryStoreProfileCount(storeID)
+	}
+
+	// Forward other key events to the focused text input
+	var cmd tea.Cmd
+	m.countInputs[m.countFocused], cmd = m.countInputs[m.countFocused].Update(msg)
+	return m, cmd
+}
+
 func (m Model) handleResultNavigation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "tab":
@@ -458,6 +536,14 @@ func (m Model) updateIdentifierInputs(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds := make([]tea.Cmd, len(m.identifierInputs))
 	for i := range m.identifierInputs {
 		m.identifierInputs[i], cmds[i] = m.identifierInputs[i].Update(msg)
+	}
+	return m, tea.Batch(cmds...)
+}
+
+func (m Model) updateCountInputs(msg tea.Msg) (tea.Model, tea.Cmd) {
+	cmds := make([]tea.Cmd, len(m.countInputs))
+	for i := range m.countInputs {
+		m.countInputs[i], cmds[i] = m.countInputs[i].Update(msg)
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -549,6 +635,48 @@ func (m Model) queryIdentifier() tea.Cmd {
 
 		return profilesFoundMsg{profiles: profiles}
 	}
+}
+
+func (m Model) queryStoreProfileCount(storeID string) tea.Cmd {
+	// Generate all shard values
+	shards := make([]string, 11)
+	shards[0] = storeID
+	for i := 0; i < 10; i++ {
+		shards[i+1] = fmt.Sprintf("%s#%d", storeID, i)
+	}
+
+	// Create a shared client and semaphore for rate limiting
+	ctx := context.Background()
+	client, err := dynamo.NewClient(ctx)
+	if err != nil {
+		return func() tea.Msg {
+			return errorMsg{err: fmt.Errorf("failed to create DynamoDB client: %w", err)}
+		}
+	}
+
+	// Rate limit to 3 concurrent queries to avoid hitting DynamoDB too hard
+	semaphore := make(chan struct{}, 3)
+
+	// Create commands for each shard query
+	cmds := make([]tea.Cmd, len(shards))
+	for i, shard := range shards {
+		s := shard // capture for closure
+		cmds[i] = func() tea.Msg {
+			semaphore <- struct{}{}        // Acquire
+			defer func() { <-semaphore }() // Release
+
+			count, err := client.CountProfilesInStoreByShard(ctx, s)
+			return countShardResultMsg{
+				result: dynamo.ShardCountResult{
+					Shard: s,
+					Count: count,
+					Error: err,
+				},
+			}
+		}
+	}
+
+	return tea.Batch(cmds...)
 }
 
 func (m Model) createMappingsTable(mappings []models.Mapping) table.Model {
@@ -663,12 +791,16 @@ func (m Model) View() string {
 		b.WriteString(m.renderProfileInput())
 	case StateIdentifierInput:
 		b.WriteString(m.renderIdentifierInput())
+	case StateCountInput:
+		b.WriteString(m.renderCountInput())
 	case StateLoading:
 		b.WriteString(m.renderLoading())
 	case StateProfileResult, StateIdentifierResult:
 		b.WriteString(m.renderResults())
 	case StateProfileSelection:
 		b.WriteString(m.renderProfileSelection())
+	case StateCountResult:
+		b.WriteString(m.renderCountResult())
 	case StateError:
 		b.WriteString(m.renderError())
 	}
@@ -729,6 +861,88 @@ func (m Model) renderIdentifierInput() string {
 
 	b.WriteString(HelpStyle.Render("Tab/Arrow keys to navigate • Enter to submit"))
 	return b.String()
+}
+
+func (m Model) renderCountInput() string {
+	var b strings.Builder
+	b.WriteString(SubtitleStyle.Render("Count Store Profiles - Enter Store ID:") + "\n\n")
+	b.WriteString(SubtitleStyle.Render("This will query 11 shards (storeId, storeId#0-9) in parallel.") + "\n\n")
+
+	b.WriteString(InputLabelStyle.Render("Store ID:") + "\n")
+	b.WriteString(FocusedInputStyle.Render(m.countInputs[0].View()) + "\n\n")
+
+	b.WriteString(HelpStyle.Render("Enter to submit"))
+	return b.String()
+}
+
+func (m Model) renderCountResult() string {
+	var b strings.Builder
+
+	storeID := strings.TrimSpace(m.countInputs[0].Value())
+	b.WriteString(SubtitleStyle.Render(fmt.Sprintf("Profile Count for Store: %s", storeID)) + "\n\n")
+
+	// Show spinner if still counting
+	if !m.countComplete {
+		b.WriteString(m.spinner.View() + " Counting profiles across shards...\n\n")
+	}
+
+	// Show intermediate results
+	if len(m.countResults) > 0 {
+		b.WriteString(InputLabelStyle.Render("Shard Results:") + "\n")
+
+		// Sort results by shard name for consistent display
+		sortedResults := make([]dynamo.ShardCountResult, len(m.countResults))
+		copy(sortedResults, m.countResults)
+		sortShardResults(sortedResults, storeID)
+
+		for _, result := range sortedResults {
+			status := "✓"
+			countStr := fmt.Sprintf("%d", result.Count)
+			if result.Error != nil {
+				status = "✗"
+				countStr = "error"
+			}
+			b.WriteString(fmt.Sprintf("  %s %s: %s\n", status, result.Shard, countStr))
+		}
+		b.WriteString("\n")
+	}
+
+	// Show running total
+	b.WriteString(SelectedStyle.Render(fmt.Sprintf("Running Total: %d profiles", m.countTotal)) + "\n")
+	b.WriteString(SubtitleStyle.Render(fmt.Sprintf("Shards queried: %d/11", len(m.countResults))) + "\n")
+
+	if m.countComplete {
+		b.WriteString("\n" + WarningStyle.Render(fmt.Sprintf("Final Count: %d profiles", m.countTotal)) + "\n")
+	}
+
+	return b.String()
+}
+
+func sortShardResults(results []dynamo.ShardCountResult, storeID string) {
+	// Sort by: storeID first, then storeID#0, storeID#1, ..., storeID#9
+	shardOrder := func(shard string) int {
+		if shard == storeID {
+			return -1 // Base storeID comes first
+		}
+		// Extract shard number from storeID#N
+		if strings.HasPrefix(shard, storeID+"#") {
+			suffix := strings.TrimPrefix(shard, storeID+"#")
+			if n, err := fmt.Sscanf(suffix, "%d", new(int)); err == nil && n == 1 {
+				var num int
+				fmt.Sscanf(suffix, "%d", &num)
+				return num
+			}
+		}
+		return 100 // Unknown format, sort to end
+	}
+
+	for i := 0; i < len(results)-1; i++ {
+		for j := i + 1; j < len(results); j++ {
+			if shardOrder(results[i].Shard) > shardOrder(results[j].Shard) {
+				results[i], results[j] = results[j], results[i]
+			}
+		}
+	}
 }
 
 func (m Model) renderLoading() string {
