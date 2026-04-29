@@ -27,7 +27,7 @@ func main() {
 	mergesTable := flag.String("merges-table", "", "DynamoDB merges table name (overrides env/cell-based naming)")
 
 	// Query mode and input prefill flags
-	mode := flag.String("mode", "", "Query mode: 'profile' or 'identifier' (skips mode selection screen)")
+	mode := flag.String("mode", "", "Query mode: 'profile', 'identifier', or 'count' (skips mode selection screen)")
 	accountID := flag.String("account-id", "", "Account ID to prefill")
 	storeID := flag.String("store-id", "", "Store ID to prefill")
 	profileID := flag.String("profile-id", "", "Profile ID to prefill (for profile mode)")

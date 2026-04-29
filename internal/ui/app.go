@@ -202,6 +202,11 @@ func NewModelWithConfig(cfg Config) Model {
 		initialMode = ModeQueryIdentifier
 		selectedMode = 1
 		identifierInputs[0].Focus()
+	case "count":
+		initialState = StateCountInput
+		initialMode = ModeCountProfiles
+		selectedMode = 2
+		countInputs[0].Focus()
 	default:
 		profileInputs[0].Focus()
 	}
@@ -895,14 +900,25 @@ func (m Model) renderCountResult() string {
 		copy(sortedResults, m.countResults)
 		sortShardResults(sortedResults, storeID)
 
+		var firstError error
 		for _, result := range sortedResults {
 			status := "✓"
 			countStr := fmt.Sprintf("%d", result.Count)
 			if result.Error != nil {
 				status = "✗"
 				countStr = "error"
+				if firstError == nil {
+					firstError = result.Error
+				}
 			}
 			b.WriteString(fmt.Sprintf("  %s %s: %s\n", status, result.Shard, countStr))
+		}
+
+		// Show first error details if any
+		if firstError != nil {
+			b.WriteString("\n" + ErrorStyle.Render("Error details:") + "\n")
+			errMsg := fmt.Sprintf("%v", firstError)
+			b.WriteString(wrapText(errMsg, 80) + "\n")
 		}
 		b.WriteString("\n")
 	}
