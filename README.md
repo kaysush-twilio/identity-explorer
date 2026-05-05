@@ -6,6 +6,7 @@ A TUI (Terminal User Interface) application for exploring Identity Service data 
 
 - **Query by Profile**: Look up all identifiers and merge records for a specific profile ID
 - **Query by Identifier**: Find profiles associated with a specific identifier (email, phone, etc.)
+- **Count Store Profiles**: Count total profiles in a store (queries sharded GSI in parallel)
 - Interactive profile selection when multiple matches are found
 - Formatted table display for mappings and merges
 - Command-line prefill for quick queries
@@ -44,6 +45,11 @@ identity-explorer --profile my-aws-profile \
   --mode identifier \
   --account-id AC123456 --store-id my-store \
   --id-type email --id-value user@example.com
+
+# Count profiles in a store
+identity-explorer --profile my-aws-profile \
+  --mode count \
+  --account-id AC123456 --store-id my-store
 
 # Query in a different environment
 identity-explorer --profile my-aws-profile \
@@ -87,7 +93,7 @@ Example: `dev-us-east-1-cell-1.IdentityMappings.v1`
 
 | Flag | Description |
 |------|-------------|
-| `--mode` | Query mode: `profile` or `identifier` (skips mode selection screen) |
+| `--mode` | Query mode: `profile`, `identifier`, or `count` (skips mode selection screen) |
 | `--account-id` | Account ID to prefill |
 | `--store-id` | Store ID to prefill |
 | `--profile-id` | Profile ID to prefill (for profile mode) |
@@ -186,6 +192,20 @@ Find profiles by a specific identifier:
 **Output:**
 - List of matching profile IDs (interactive selection if multiple)
 - All mappings and merges for the selected profile
+
+### 3. Count Store Profiles
+
+Count the total number of profiles in a store:
+
+**Inputs:**
+- Account ID
+- Store ID
+
+**Output:**
+- Profile counts per shard (storeId, storeId#0 through storeId#9)
+- Total profile count across all shards
+
+The count query runs in parallel across 11 sharded StoreID values with rate limiting, showing intermediate results as each shard completes.
 
 ## Keyboard Shortcuts
 
