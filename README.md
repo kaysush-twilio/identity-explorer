@@ -14,13 +14,6 @@ A TUI (Terminal User Interface) application for exploring Identity Service data 
 
 ## Installation
 
-### Using Homebrew (macOS/Linux)
-
-```bash
-brew tap kaysush-twilio/tap
-brew install identity-explorer
-```
-
 ### Download Binary
 
 Download the latest release from the [Releases page](https://github.com/kaysush-twilio/identity-explorer/releases).
