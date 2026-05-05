@@ -485,7 +485,7 @@ func (m Model) handleCountInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		storeID := strings.TrimSpace(m.countInputs[0].Value())
 		if storeID == "" {
-			m.err = fmt.Errorf("Store ID is required")
+			m.err = fmt.Errorf("store ID is required")
 			m.state = StateError
 			return m, nil
 		}
@@ -943,9 +943,8 @@ func sortShardResults(results []dynamo.ShardCountResult, storeID string) {
 		// Extract shard number from storeID#N
 		if strings.HasPrefix(shard, storeID+"#") {
 			suffix := strings.TrimPrefix(shard, storeID+"#")
-			if n, err := fmt.Sscanf(suffix, "%d", new(int)); err == nil && n == 1 {
-				var num int
-				fmt.Sscanf(suffix, "%d", &num)
+			var num int
+			if n, err := fmt.Sscanf(suffix, "%d", &num); err == nil && n == 1 {
 				return num
 			}
 		}

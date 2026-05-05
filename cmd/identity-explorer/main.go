@@ -70,7 +70,7 @@ func main() {
 
 	// Set AWS environment variables from flags (flags take precedence)
 	if *awsProfile != "" {
-		os.Setenv("AWS_PROFILE", *awsProfile)
+		_ = os.Setenv("AWS_PROFILE", *awsProfile)
 	}
 
 	// Resolve values: flags have defaults, but env vars can override if flag is at default
@@ -78,7 +78,7 @@ func main() {
 	if envRegion := os.Getenv("AWS_REGION"); envRegion != "" && *region == "us-east-1" {
 		resolvedRegion = envRegion
 	}
-	os.Setenv("AWS_REGION", resolvedRegion)
+	_ = os.Setenv("AWS_REGION", resolvedRegion)
 
 	resolvedEnv := *env
 	if envEnv := os.Getenv("IDENTITY_ENV"); envEnv != "" && *env == "dev" {
@@ -92,17 +92,17 @@ func main() {
 
 	// Construct table names from env/region/cell if not explicitly provided
 	if *mappingsTable != "" {
-		os.Setenv("MAPPINGS_TABLE", *mappingsTable)
+		_ = os.Setenv("MAPPINGS_TABLE", *mappingsTable)
 	} else if resolvedEnv != "" && resolvedRegion != "" && resolvedCell != "" {
 		tableName := fmt.Sprintf("%s-%s-%s.IdentityMappings.v1", resolvedEnv, resolvedRegion, resolvedCell)
-		os.Setenv("MAPPINGS_TABLE", tableName)
+		_ = os.Setenv("MAPPINGS_TABLE", tableName)
 	}
 
 	if *mergesTable != "" {
-		os.Setenv("MERGES_TABLE", *mergesTable)
+		_ = os.Setenv("MERGES_TABLE", *mergesTable)
 	} else if resolvedEnv != "" && resolvedRegion != "" && resolvedCell != "" {
 		tableName := fmt.Sprintf("%s-%s-%s.IdentityMerges.v1", resolvedEnv, resolvedRegion, resolvedCell)
-		os.Setenv("MERGES_TABLE", tableName)
+		_ = os.Setenv("MERGES_TABLE", tableName)
 	}
 
 	// Build UI config from flags
